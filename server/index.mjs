@@ -122,7 +122,6 @@ app.all('/api/*', async (req, res) => {
       const body = await readBody(req), id = decodeURIComponent(outcomeMatch[1]);
       if (!['solved', 'partial', 'unresolved', 'unrelated'].includes(body.outcome)) return send(res, 400, { error: 'A valid outcome is required.' });
       if (!Number.isInteger(body.rating) || body.rating < 1 || body.rating > 5) return send(res, 400, { error: 'Please rate the service from 1 to 5 stars.' });
-      if (body.outcome === 'solved' && !body.evidenceId && String(body.closingReason || '').trim().length < 50) return send(res, 400, { error: 'To close a grievance, add a resolution photo or provide a detailed closure application of at least 50 characters.' });
       if (body.evidenceId && !db.prepare('SELECT id FROM evidence WHERE id=? AND grievance_id=?').get(body.evidenceId, id)) return send(res, 400, { error: 'The resolution photo is not attached to this grievance.' });
       const state = body.outcome === 'solved' ? 'RESOLVED' : 'REOPENED', stamp = now();
       if (!db.prepare('SELECT id FROM grievances WHERE id=?').get(id)) return send(res, 404, { error: 'Grievance not found.' });
