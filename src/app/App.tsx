@@ -16,10 +16,10 @@ function Badge({ children, tone = 'amber' }: { children: React.ReactNode; tone?:
 function stateLabel(state: Grievance['state']) { return state.replaceAll('_', ' ').toLowerCase().replace(/\b\w/g, c => c.toUpperCase()) }
 
 export function App() {
-  const [page, setPage] = useState<Page>('home'), [, setGrievances] = useState<Grievance[]>([]), [selected, setSelected] = useState<Grievance | null>(null), [notice, setNotice] = useState<Notice>(null), [loading, setLoading] = useState(true), [session, setSession] = useState<Session | null>(() => { const saved = localStorage.getItem('shravana-session'); return saved ? JSON.parse(saved) as Session : null })
+  const [page, setPage] = useState<Page>('home'), [, setGrievances] = useState<Grievance[]>([]), [selected, setSelected] = useState<Grievance | null>(null), [notice, setNotice] = useState<Notice>(null), [loading, setLoading] = useState(true), [session, setSession] = useState<Session | null>(null)
   const refresh = async () => { try { const items = await api<Grievance[]>('/grievances'); setGrievances(items); setSelected(current => items.find(item => item.id === current?.id) ?? items[0] ?? null) } catch { setNotice({ text: 'Could not reach the local API. Start the app with npm run dev.', error: true }) } finally { setLoading(false) } }
   useEffect(() => { void refresh() }, [])
-  if (!session) return <Login onLogin={user => { localStorage.setItem('shravana-session', JSON.stringify(user)); setSession(user); setPage(user.role === 'CITIZEN' ? 'home' : 'department') }} />
+  if (!session) return <Login onLogin={user => { localStorage.removeItem('shravana-session'); setSession(user); setPage(user.role === 'CITIZEN' ? 'home' : 'department') }} />
   const go = (next: Page, grievance?: Grievance) => { if (grievance) setSelected(grievance); setPage(next); window.scrollTo({ top: 0, behavior: 'smooth' }) }
   const save = (grievance: Grievance, message: string) => { setSelected(grievance); setGrievances(items => [grievance, ...items.filter(item => item.id !== grievance.id)]); setNotice({ text: message }) }
   const navigation = session.role === 'CITIZEN' ? citizenNav : officialNav
