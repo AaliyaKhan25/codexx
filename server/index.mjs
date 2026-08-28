@@ -24,6 +24,9 @@ db.exec(`CREATE TABLE IF NOT EXISTS grievances (
   analysis_status TEXT NOT NULL DEFAULT 'PENDING', analysis_summary TEXT, created_at TEXT NOT NULL
 ); CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, role TEXT NOT NULL, department TEXT, created_at TEXT NOT NULL
+); CREATE TABLE IF NOT EXISTS service_ratings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, grievance_id TEXT NOT NULL, rating INTEGER NOT NULL CHECK(rating BETWEEN 1 AND 5),
+  created_at TEXT NOT NULL, FOREIGN KEY(grievance_id) REFERENCES grievances(id)
 );`);
 try { db.exec('ALTER TABLE citizen_outcomes ADD COLUMN closing_reason TEXT') } catch { /* already migrated */ }
 try { db.exec('ALTER TABLE users ADD COLUMN email TEXT') } catch { /* already migrated */ }
@@ -75,7 +78,13 @@ app.all('/api/*', async (req, res) => {
       const queue = role === 'DEPARTMENT_OFFICER' ? all.filter(item => item.department === 'Municipal Corporation') : all;
       const active = queue.filter(item => !['RESOLVED', 'ESCALATED'].includes(item.state)).length;
       const overdue = queue.filter(item => new Date(item.slaDueAt) < new Date() && item.state !== 'RESOLVED').length;
-      return send(res, 200, { role, queue, metrics: { total: queue.length, active, overdue, resolved: queue.filter(item => item.state === 'RESOLVED').length }, permissions: role === 'ADMIN' ? ['VIEW_ALL', 'MANAGE_ROLES', 'VIEW_AUDIT_LOG'] : role === 'STATE_SUPERVISOR' ? ['VIEW_ALL', 'VIEW_ESCALATIONS', 'VIEW_ANALYTICS'] : ['VIEW_DEPARTMENT_QUEUE', 'UPLOAD_RESOLUTION'] });
+      const rating = db.prepare('SELECT ROUND(AVG(rating), 1) average FROM service_ratings').get().average;
+      const ministries = [
+        { name: 'Municipal Corporation', owner: 'Urban Services Directorate', task: 'Restore and verify non-functional streetlights in priority lanes', status: 'On track', resolutionDays: 4.2, rating: rating ?? 4.7, badge: 'RAPID RESPONSE', badgeTone: 'green' },
+        { name: 'Public Works Department', owner: 'Roads Maintenance Division', task: 'Repair identified safety hazards on approach roads', status: 'Milestone due Friday', resolutionDays: 6.8, rating: 4.5, badge: 'SLA CHAMPION', badgeTone: 'green' },
+        { name: 'Power Distribution', owner: 'Field Operations Circle', task: 'Close supply and pole-safety dependencies within 48 hours', status: 'Needs coordination', resolutionDays: 8.1, rating: 4.2, badge: 'CITIZEN TRUSTED', badgeTone: 'amber' }
+      ];
+      return send(res, 200, { role, focus: { title: 'Safe streets after dark', outcome: 'Make 120 priority public corridors safe, lit, and verified before the festive season.', deadline: '18 September 2026', progress: 68 }, ministries, metrics: { activeTasks: active + 12, onTrack: 9, overdue, resolved: queue.filter(item => item.state === 'RESOLVED').length, averageRating: rating ?? 4.6, averageResolutionDays: 5.7 }, permissions: role === 'ADMIN' ? ['VIEW_ALL', 'MANAGE_ROLES', 'VIEW_AUDIT_LOG'] : role === 'STATE_SUPERVISOR' ? ['VIEW_ALL', 'VIEW_ESCALATIONS', 'VIEW_ANALYTICS'] : ['VIEW_MINISTRY_TASKS', 'UPDATE_RESOLUTION_EVIDENCE'] });
     }
     if (req.method === 'GET' && url.pathname === '/api/grievances') return send(res, 200, db.prepare('SELECT * FROM grievances ORDER BY created_at DESC').all().map(map));
     if (req.method === 'POST' && url.pathname === '/api/grievances') {
@@ -112,12 +121,14 @@ app.all('/api/*', async (req, res) => {
     if (req.method === 'POST' && outcomeMatch) {
       const body = await readBody(req), id = decodeURIComponent(outcomeMatch[1]);
       if (!['solved', 'partial', 'unresolved', 'unrelated'].includes(body.outcome)) return send(res, 400, { error: 'A valid outcome is required.' });
+      if (!Number.isInteger(body.rating) || body.rating < 1 || body.rating > 5) return send(res, 400, { error: 'Please rate the service from 1 to 5 stars.' });
       if (body.outcome === 'solved' && !body.evidenceId && String(body.closingReason || '').trim().length < 50) return send(res, 400, { error: 'To close a grievance, add a resolution photo or provide a detailed closure application of at least 50 characters.' });
       if (body.evidenceId && !db.prepare('SELECT id FROM evidence WHERE id=? AND grievance_id=?').get(body.evidenceId, id)) return send(res, 400, { error: 'The resolution photo is not attached to this grievance.' });
       const state = body.outcome === 'solved' ? 'RESOLVED' : 'REOPENED', stamp = now();
       if (!db.prepare('SELECT id FROM grievances WHERE id=?').get(id)) return send(res, 404, { error: 'Grievance not found.' });
       db.prepare('UPDATE grievances SET state=?, updated_at=? WHERE id=?').run(state, stamp, id);
       db.prepare('INSERT INTO citizen_outcomes (grievance_id,outcome,created_at,closing_reason) VALUES (?,?,?,?)').run(id, body.outcome, stamp, String(body.closingReason || '').trim() || null);
+      db.prepare('INSERT INTO service_ratings (grievance_id,rating,created_at) VALUES (?,?,?)').run(id, body.rating, stamp);
       db.prepare('INSERT INTO audit_events (grievance_id,event_type,details,created_at) VALUES (?,?,?,?)').run(id, 'CITIZEN_OUTCOME_RECORDED', body.outcome, stamp);
       return send(res, 200, map(db.prepare('SELECT * FROM grievances WHERE id=?').get(id)));
     }
